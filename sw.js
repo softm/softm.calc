@@ -1,5 +1,5 @@
 /* Bump this value whenever an offline asset changes. */
-const CACHE_VERSION = '2026-11-05-default-pink';
+const CACHE_VERSION = '2026-11-05-account-only';
 const SCOPE_URL = new URL(self.registration.scope);
 const CACHE_PREFIX = 'calc-static:' + SCOPE_URL.pathname + ':';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -9,6 +9,7 @@ const PRECACHE_ASSETS = [
   './index.html',
   './styles.css',
   './app.js',
+  './account.js',
   './office.js',
   './engine.js',
   './input.js',
