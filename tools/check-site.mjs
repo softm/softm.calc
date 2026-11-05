@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { SourceTextModule } from 'node:vm';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
-const PAGES_BASE = new URL('https://softm.github.io/calc/');
+const PAGES_BASE = new URL('https://softm.github.io/softm.calc/');
 const REQUIRED_FILES = [
   'index.html', 'styles.css', 'app.js', 'engine.js', 'notes.js', 'notes.css',
   'manifest.webmanifest', 'sw.js', 'icons/icon.svg', 'icons/icon-192.png',
@@ -51,9 +51,7 @@ async function resolveAsset(raw, owner) {
     return null;
   }
   // The shared account module is an explicit online-only dependency; offline calculator assets stay local.
-  if (url.origin === PAGES_BASE.origin && url.pathname === '/shared/platform/v1/boot.mjs' &&
-      url.searchParams.get('site') === 'calc' && url.searchParams.get('v') === '20261028' &&
-      [...url.searchParams.keys()].every(key => ['site','v'].includes(key)) && !url.hash) return null;
+  if (url.href === 'https://softm.github.io/shared/platform/v1/site-account.mjs?v=20261030-menu-1') return null;
   if (url.origin !== PAGES_BASE.origin || !url.pathname.startsWith(PAGES_BASE.pathname)) {
     fail(owner + ': 앱 범위 밖의 리소스 참조: ' + reference);
     return null;
