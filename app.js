@@ -62,7 +62,7 @@ function readSettings() {
 function saveSettings() {
   if (!settingsWritable) return;
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, mode: state.mode, angleMode: state.angleMode, expression: expression.value, theme: document.body.dataset.theme || 'light', carryApproximate: state.carryApproximate, memoryValue: state.memoryValue, memoryApproximate: state.memoryApproximate, grandTotalValue: state.grandTotalValue, grandTotalApproximate: state.grandTotalApproximate }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, mode: state.mode, angleMode: state.angleMode, expression: expression.value, theme: document.body.dataset.theme || 'pink', carryApproximate: state.carryApproximate, memoryValue: state.memoryValue, memoryApproximate: state.memoryApproximate, grandTotalValue: state.grandTotalValue, grandTotalApproximate: state.grandTotalApproximate }));
   } catch { settingsWritable = false; toast('기기에 저장할 공간이 부족해요. 필요한 기록을 내보내 주세요.'); }
 }
 function queueSettings() { clearTimeout(settingsTimer); settingsTimer = setTimeout(saveSettings, 200); }
@@ -409,11 +409,12 @@ function switchView(view, focusTab = false) {
   document.title = view === 'notes' ? '계산노트 · calc' : 'calc · 계산과 기록을 한곳에';
 }
 function syncTheme() {
-  $('theme-select').value = document.body.dataset.theme || 'light';
+  const theme = document.body.dataset.theme || 'pink';
+  $('theme-select').value = theme;
+  document.querySelector('meta[name="theme-color"]').content = { pink: '#913e64', cream: '#745022', dark: '#242424', light: '#536600' }[theme];
 }
 
 readSettings(); readHistory();
-if (!document.body.dataset.theme) document.body.dataset.theme = matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light';
 syncTheme(); updateModes(); renderHistory();
 mountNotes($('notes-container'), { toast, onStorageError: () => toast('계산노트 저장 상태를 확인해 주세요.') });
 expression.maxLength = 2048;

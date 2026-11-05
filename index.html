@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#536600">
+  <meta name="theme-color" content="#913e64">
   <meta name="description" content="가볍게 계산하고, 필요한 순간 다시 꺼내 보세요. 기본·공학 계산, 메모를 붙이는 계산 기록, 수량과 단가로 만드는 계산노트. 무료 웹 계산기 calc.">
   <meta name="application-name" content="calc">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -24,7 +24,7 @@
   <script src="./adfit.js" defer></script>
   <script type="module" src="./app.js"></script>
 </head>
-<body>
+<body data-theme="pink">
   <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-note" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></symbol>
@@ -59,7 +59,7 @@
     </nav>
     <div class="header-actions">
       <button id="install-button" class="button install-button" hidden><svg class="icon"><use href="#i-download"/></svg><span>앱 설치</span></button>
-      <label class="theme-pick"><span class="sr-only">계산기 색상 테마</span><select id="theme-select" aria-label="계산기 색상 테마" title="색상 테마"><option value="light">화이트</option><option value="dark">차콜</option><option value="cream">크림</option><option value="pink">핑크</option></select></label>
+      <label class="theme-pick"><span class="sr-only">계산기 색상 테마</span><select id="theme-select" aria-label="계산기 색상 테마" title="색상 테마"><option value="pink" selected>핑크</option><option value="light">화이트</option><option value="dark">차콜</option><option value="cream">크림</option></select></label>
       <button id="help-button" class="icon-button" aria-label="사용 안내 및 단축키" title="사용 안내"><svg class="icon"><use href="#i-help"/></svg></button>
     </div>
   </header>
