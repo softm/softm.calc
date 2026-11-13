@@ -6,9 +6,9 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 배포 주소 | [softm.github.io/calc](https://softm.github.io/calc/) |
-| 저장소 | [softm/calc](https://github.com/softm/calc) |
-| 개인정보처리방침 | [softm.github.io/calc/privacy.html](https://softm.github.io/calc/privacy.html) |
+| 배포 주소 | [softm.github.io/calc](https://softm.github.io/softm.calc/) |
+| 저장소 | [softm/calc](https://github.com/softm/softm.calc) |
+| 개인정보처리방침 | [softm.github.io/calc/privacy.html](https://softm.github.io/softm.calc/privacy.html) |
 | 실행 방식 | 빌드 과정과 런타임 의존성이 없는 HTML·CSS·JavaScript ES modules |
 | 데이터 | 계산 기록과 노트를 현재 브라우저에 저장 |
 | 설치 | 브라우저에서 바로 사용하며, 지원하는 환경에서는 홈 화면에 추가 가능 |
@@ -48,9 +48,21 @@
 모드는 계산기 상단에서 전환합니다. 계산 기록에는 모드가 저장되어 불러왔을 때 동일한 계산 규칙을 사용합니다. 계산노트는 기존의 수학적 퍼센트 규칙을 유지합니다.
 
 
+## Cloudflare 로그인·회원가입 (2026-11-13)
+
+상단 계정 아이콘을 누르면 Google·카카오·네이버 중 사용 가능한 SNS로 로그인할 수 있습니다. 처음 이용하면 Cloudflare 공통 계정에서 회원가입과 동의를 진행하고, 로그인 후에는 SNS 프로필 이미지 또는 첫 글자가 상단 아이콘에 표시됩니다. 로그인된 상태에서는 현재 계정·로그아웃·계정 관리만 표시합니다.
+
+- 공통 인증 Worker: https://softm-hannun-account.softm.workers.dev
+- 공통 계정 관리: https://softm-hannun-account.softm.workers.dev/account
+- 계산기 식별자는 `calc`이며 공통 UID를 사용합니다. 계산 내역을 전송하는 calc 전용 DB/Worker는 만들지 않았습니다.
+- SNS 제공자 활성화 상태는 `/health`에서 확인합니다. Google은 설정되었고 카카오·네이버는 Worker 설정 및 승인에 따라 활성화됩니다.
+- 로그인 세션은 공통 SDK에서 단기 sessionStorage로 관리합니다. 인증정보·프로필 외 계산 기록·노트는 기기 로컬 저장을 유지합니다.
+- 오프라인 계산·기록·노트는 로그인 실패와 무관하게 작동합니다. GitHub Pages에서 제공되는 웹 로그인에 우선 적용하며 Android 오프라인 WebView의 SNS 로그인 복귀는 별도 구현이 필요합니다.
+- 향후 계산기 개인 저장을 지원할 때에는 공통 계정 Worker와 분리한 계산기 전용 Cloudflare D1 및 Worker를 사용해야 합니다.
+
 ## 저장과 개인정보
 
-계산은 기기 안에서 처리합니다. 계산을 위해 외부 API로 식이나 결과를 보내지 않으며, 로그인과 서버 데이터베이스를 사용하지 않습니다.
+계산은 기기 안에서 처리합니다. 계산식과 결과를 서버에 보내지 않습니다. 선택적으로 Cloudflare 공통 계정(구글·카카오·네이버 SNS)으로 로그인하거나 첫 가입을 할 수 있지만, 계산 기록과 계산노트는 기존처럼 기기에만 보관하고 로그인만으로 업로드·복원·기기 간 동기화하지 않습니다.
 
 기록과 노트는 현재 브라우저의 로컬 저장소에 남습니다. 다른 브라우저나 기기와 자동으로 동기화되지 않으며, 브라우저의 사이트 데이터를 지우면 저장한 내용도 삭제될 수 있습니다. 공유한 내용은 사용자가 선택한 앱이나 대상에게 전달됩니다.
 
@@ -86,7 +98,7 @@ GitHub Pages와 같은 하위 경로까지 확인하려면 저장소의 부모 �
 
 ## GitHub Pages 배포
 
-[저장소의 Pages 설정](https://github.com/softm/calc/settings/pages)에서 다음과 같이 지정합니다.
+[저장소의 Pages 설정](https://github.com/softm/softm.calc/settings/pages)에서 다음과 같이 지정합니다.
 
 | 설정 | 값 |
 | --- | --- |
@@ -94,7 +106,7 @@ GitHub Pages와 같은 하위 경로까지 확인하려면 저장소의 부모 �
 | Branch | main |
 | Folder | / (root) |
 
-정적 파일이 저장소 루트에 있으므로 빌드 출력 폴더를 별도로 지정하지 않습니다. 배포 주소는 [https://softm.github.io/calc/](https://softm.github.io/calc/)입니다.
+정적 파일이 저장소 루트에 있으므로 빌드 출력 폴더를 별도로 지정하지 않습니다. 배포 주소는 [https://softm.github.io/softm.calc/](https://softm.github.io/softm.calc/)입니다.
 
 모든 앱 자원은 상대 경로를 사용하고, manifest의 id·start_url·scope는 ./입니다. 다른 GitHub Pages 프로젝트의 루트 경로와 섞이지 않도록 유지합니다. .nojekyll 파일은 정적 자원을 Jekyll 변환 없이 제공하기 위해 포함합니다.
 
