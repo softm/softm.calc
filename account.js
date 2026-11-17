@@ -1,11 +1,11 @@
 import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChanges} from './app.js';
 
-// calc: Cloudflare identity plus explicit, opt-in calculation-history sync.
+// calc: Cloudflare identity plus automatic calculation-history sync after login.
 (() => {
   'use strict';
   const SITE = 'calc';
   const WORKER = 'https://softm-hannun-account.softm.workers.dev';
-  const CLIENT_URL = 'https://softm.github.io/services/cloudflare-account/src/client.mjs?v=20261117-calc-history-1';
+  const CLIENT_URL = 'https://softm.github.io/services/cloudflare-account/src/client.mjs?v=20261117-calc-history-2';
   const PROVIDERS = [
     {id:'google',label:'Google',mark:'G',unavailable:'연결 준비 중'},
     {id:'kakao',label:'카카오',mark:'',unavailable:'연결 준비 중'},
@@ -76,10 +76,10 @@ import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChange
       <div id="calc-account-guest" class="calc-account-providers"></div>
       <div id="calc-account-signed" hidden>
         <div class="calc-account-user"><div class="calc-account-avatar" id="calc-account-user-avatar"></div><div><strong id="calc-account-name"></strong><span id="calc-account-provider"></span></div></div>
-        <div class="calc-account-actions"><button id="calc-history-sync" type="button">계산 이력 동기화 켜기</button><button id="calc-history-delete" type="button">Cloudflare 계산 이력 삭제</button><a id="calc-account-manage" target="_blank" rel="noopener noreferrer">계정 관리</a><button id="calc-account-logout" type="button">로그아웃</button></div>
+        <div class="calc-account-actions"><button id="calc-history-sync" type="button">계산 이력 지금 동기화</button><button id="calc-history-delete" type="button">Cloudflare 계산 이력 삭제</button><a id="calc-account-manage" target="_blank" rel="noopener noreferrer">계정 관리</a><button id="calc-account-logout" type="button">로그아웃</button></div>
       </div>
       <p class="calc-account-status" id="calc-account-status" role="status" aria-live="polite"></p>
-      <p class="calc-account-footnote">계산 이력은 동기화를 직접 켠 경우에만 암호화해 Cloudflare에 보관합니다. 계산노트는 계속 이 기기에만 저장됩니다.</p>
+      <p class="calc-account-footnote">로그인하면 계산 이력을 암호화해 Cloudflare에 자동 보관하고 같은 계정의 기기와 공유합니다. 계산노트는 계속 이 기기에만 저장됩니다.</p>
       <div class="calc-account-actions"><button type="button" id="calc-account-close">닫기</button></div>
     </section>`;
   document.body.append(overlay);
@@ -131,6 +131,7 @@ import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChange
   }
   function currentUser() { return client?.currentUser || null; }
   const syncKey = uid => 'calc.cloud-history.v1:' + uid;
+  const shouldSync = user => Boolean(user && localStorage.getItem(syncKey(user.uid)) !== 'disabled');
   function same(a,b) { return JSON.stringify(a) === JSON.stringify(b); }
   function mergeHistory(left,right) {
     const values = new Map();
@@ -151,7 +152,7 @@ import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChange
   }
   function syncLabel() {
     if (syncBusy) return '계산 이력 동기화 중…';
-    return syncEnabled ? '계산 이력 동기화 켜짐' : '계산 이력 동기화 켜기';
+    return syncEnabled ? '계산 이력 지금 동기화' : '계산 이력 동기화 다시 켜기';
   }
   async function synchronize() {
     if (!syncEnabled || syncBusy || !currentUser()) return;
@@ -177,7 +178,7 @@ import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChange
     if (!syncEnabled) {
       const accepted=window.confirm('이 기기의 계산 이력을 로그인한 계정에 합치고, 이후 변경을 Cloudflare에 암호화해 보관할까요?\n\n계산노트는 동기화하지 않습니다.');
       if(!accepted)return;
-      localStorage.setItem(syncKey(user.uid),'enabled');syncEnabled=true;render();
+      localStorage.removeItem(syncKey(user.uid));syncEnabled=true;render();
     }
     await synchronize();
   }
@@ -189,8 +190,8 @@ import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChange
     syncBusy=true;render();setStatus('Cloudflare 계산 이력을 삭제하고 있습니다.');
     try {
       await client.exchangeCalcHistory('DELETE');
-      localStorage.removeItem(syncKey(user.uid));syncEnabled=false;
-      setStatus('Cloudflare 계산 이력을 삭제했습니다. 이 기기의 기록은 유지됩니다.');
+      localStorage.setItem(syncKey(user.uid),'disabled');syncEnabled=false;
+      setStatus('Cloudflare 계산 이력을 삭제하고 자동 동기화를 껐습니다. 이 기기의 기록은 유지됩니다.');
     } catch(error) {setStatus(error?.message||'Cloudflare 계산 이력을 삭제하지 못했습니다.');}
     finally {syncBusy=false;render();}
   }
@@ -272,7 +273,7 @@ import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChange
     try {
       const account = await ensureClient();
       await account.login({provider,popup});
-      const user=currentUser();syncEnabled=Boolean(user&&localStorage.getItem(syncKey(user.uid))==='enabled');
+      const user=currentUser();syncEnabled=shouldSync(user);
       render();
       if(syncEnabled)void synchronize();
       closeAfterLogin();
@@ -335,5 +336,5 @@ import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChange
   });
   window.dispatchEvent(new CustomEvent('softm:account-ready',{detail:{siteId:SITE,backend:'cloudflare'}}));
   subscribeHistoryChanges(scheduleSync);
-  void ensureClient().then(() => {const user=currentUser();syncEnabled=Boolean(user&&localStorage.getItem(syncKey(user.uid))==='enabled');render();if(syncEnabled)void synchronize();}).catch(() => { /* Guest button remains; retry on click. */ });
+  void ensureClient().then(() => {const user=currentUser();syncEnabled=shouldSync(user);render();if(syncEnabled)void synchronize();}).catch(() => { /* Guest button remains; retry on click. */ });
 })();
