@@ -1,9 +1,11 @@
-// calc: Cloudflare identity only. Calculation history and notes remain device-local.
+import {getHistoryCloudSnapshot,applyHistoryCloudSnapshot,subscribeHistoryChanges} from './app.js';
+
+// calc: Cloudflare identity plus explicit, opt-in calculation-history sync.
 (() => {
   'use strict';
   const SITE = 'calc';
   const WORKER = 'https://softm-hannun-account.softm.workers.dev';
-  const CLIENT_URL = 'https://softm.github.io/services/cloudflare-account/src/client.mjs?v=20261113-native-auth-1';
+  const CLIENT_URL = 'https://softm.github.io/services/cloudflare-account/src/client.mjs?v=20261117-calc-history-1';
   const PROVIDERS = [
     {id:'google',label:'Google',mark:'G',unavailable:'연결 준비 중'},
     {id:'kakao',label:'카카오',mark:'',unavailable:'연결 준비 중'},
@@ -74,10 +76,10 @@
       <div id="calc-account-guest" class="calc-account-providers"></div>
       <div id="calc-account-signed" hidden>
         <div class="calc-account-user"><div class="calc-account-avatar" id="calc-account-user-avatar"></div><div><strong id="calc-account-name"></strong><span id="calc-account-provider"></span></div></div>
-        <div class="calc-account-actions"><a id="calc-account-manage" target="_blank" rel="noopener noreferrer">계정 관리</a><button id="calc-account-logout" type="button">로그아웃</button></div>
+        <div class="calc-account-actions"><button id="calc-history-sync" type="button">계산 이력 동기화 켜기</button><button id="calc-history-delete" type="button">Cloudflare 계산 이력 삭제</button><a id="calc-account-manage" target="_blank" rel="noopener noreferrer">계정 관리</a><button id="calc-account-logout" type="button">로그아웃</button></div>
       </div>
       <p class="calc-account-status" id="calc-account-status" role="status" aria-live="polite"></p>
-      <p class="calc-account-footnote">계산 내역과 계산노트는 기기에만 보관하며, 로그인만으로 서버에 동기화되지 않습니다.</p>
+      <p class="calc-account-footnote">계산 이력은 동기화를 직접 켠 경우에만 암호화해 Cloudflare에 보관합니다. 계산노트는 계속 이 기기에만 저장됩니다.</p>
       <div class="calc-account-actions"><button type="button" id="calc-account-close">닫기</button></div>
     </section>`;
   document.body.append(overlay);
@@ -89,8 +91,10 @@
   const status = overlay.querySelector('#calc-account-status');
   const closeButton = overlay.querySelector('#calc-account-close');
   const logoutButton = overlay.querySelector('#calc-account-logout');
+  const syncButton = overlay.querySelector('#calc-history-sync');
+  const deleteHistoryButton = overlay.querySelector('#calc-history-delete');
   const buttons = new Map();
-  let client = null, loading = null, busy = false, previousOverflow = '';
+  let client = null, loading = null, busy = false, previousOverflow = '', syncEnabled = false, syncBusy = false, syncTimer = 0;
   const enabled = {google:true,kakao:false,naver:false};
 
   function guestIcon() {
@@ -126,6 +130,70 @@
     container.append(img);
   }
   function currentUser() { return client?.currentUser || null; }
+  const syncKey = uid => 'calc.cloud-history.v1:' + uid;
+  function same(a,b) { return JSON.stringify(a) === JSON.stringify(b); }
+  function mergeHistory(left,right) {
+    const values = new Map();
+    const offer = (kind,value) => {
+      const previous = values.get(value.id);
+      const time = Date.parse(value.updatedAt);
+      if (!previous || time > previous.time || (time === previous.time && kind === 'deleted')) values.set(value.id,{kind,time,value});
+    };
+    for (const item of left.items) offer('item',item);
+    for (const item of right.items) offer('item',item);
+    for (const item of left.tombstones) offer('deleted',item);
+    for (const item of right.tombstones) offer('deleted',item);
+    const items=[],tombstones=[];
+    for (const record of values.values()) (record.kind === 'item' ? items : tombstones).push(record.value);
+    items.sort((a,b) => Date.parse(b.createdAt)-Date.parse(a.createdAt));
+    tombstones.sort((a,b) => Date.parse(a.updatedAt)-Date.parse(b.updatedAt));
+    return {version:1,items,tombstones:tombstones.slice(-5000)};
+  }
+  function syncLabel() {
+    if (syncBusy) return '계산 이력 동기화 중…';
+    return syncEnabled ? '계산 이력 동기화 켜짐' : '계산 이력 동기화 켜기';
+  }
+  async function synchronize() {
+    if (!syncEnabled || syncBusy || !currentUser()) return;
+    syncBusy = true; render(); setStatus('계산 이력을 동기화하고 있습니다.');
+    try {
+      for (let attempt=0;attempt<3;attempt++) {
+        const remote = await client.exchangeCalcHistory('GET');
+        const local = getHistoryCloudSnapshot();
+        const merged = mergeHistory(local,remote.history);
+        if (!same(local,merged)) applyHistoryCloudSnapshot(merged);
+        if (same(remote.history,merged)) { setStatus('계산 이력이 동기화되었습니다.'); return; }
+        try {
+          await client.exchangeCalcHistory('POST',{expectedRevision:remote.revision,history:merged});
+          setStatus('계산 이력이 Cloudflare에 안전하게 보관되었습니다.'); return;
+        } catch (error) { if (error.code !== 'revision-conflict') throw error; }
+      }
+      throw Error('다른 기기의 변경과 겹쳤습니다. 잠시 후 다시 시도해 주세요.');
+    } catch (error) { setStatus(error?.message || '계산 이력을 동기화하지 못했습니다. 기기 기록은 그대로 유지됩니다.'); }
+    finally { syncBusy = false; render(); }
+  }
+  async function enableSync() {
+    const user=currentUser();if(!user||syncBusy)return;
+    if (!syncEnabled) {
+      const accepted=window.confirm('이 기기의 계산 이력을 로그인한 계정에 합치고, 이후 변경을 Cloudflare에 암호화해 보관할까요?\n\n계산노트는 동기화하지 않습니다.');
+      if(!accepted)return;
+      localStorage.setItem(syncKey(user.uid),'enabled');syncEnabled=true;render();
+    }
+    await synchronize();
+  }
+  function scheduleSync() { if (!syncEnabled) return; clearTimeout(syncTimer); syncTimer=setTimeout(()=>void synchronize(),700); }
+  async function deleteCloudHistory() {
+    const user=currentUser();if(!user||syncBusy)return;
+    const accepted=window.confirm('Cloudflare에 보관된 계산 이력을 모두 삭제할까요?\n\n이 기기의 계산 이력과 계산노트는 유지됩니다. 삭제한 클라우드 이력은 복구하기 어렵습니다.');
+    if(!accepted)return;
+    syncBusy=true;render();setStatus('Cloudflare 계산 이력을 삭제하고 있습니다.');
+    try {
+      await client.exchangeCalcHistory('DELETE');
+      localStorage.removeItem(syncKey(user.uid));syncEnabled=false;
+      setStatus('Cloudflare 계산 이력을 삭제했습니다. 이 기기의 기록은 유지됩니다.');
+    } catch(error) {setStatus(error?.message||'Cloudflare 계산 이력을 삭제하지 못했습니다.');}
+    finally {syncBusy=false;render();}
+  }
   function render() {
     const user = currentUser();
     trigger.replaceChildren();
@@ -154,6 +222,9 @@
       button.querySelector('.calc-account-provider-label').textContent = enabled[id] ? label + '로 계속하기' : label + ' · ' + unavailable;
     }
     logoutButton.disabled = busy;
+    syncButton.disabled = busy || syncBusy;
+    deleteHistoryButton.disabled = busy || syncBusy;
+    syncButton.textContent = syncLabel();
   }
   async function ensureClient() {
     if (client) return client;
@@ -201,7 +272,9 @@
     try {
       const account = await ensureClient();
       await account.login({provider,popup});
+      const user=currentUser();syncEnabled=Boolean(user&&localStorage.getItem(syncKey(user.uid))==='enabled');
       render();
+      if(syncEnabled)void synchronize();
       closeAfterLogin();
     } catch (error) {
       try {popup.close();} catch {}
@@ -219,7 +292,7 @@
     busy = true;
     render();
     setStatus('로그아웃하고 있습니다.');
-    try {await client.logout();setStatus('로그아웃되었습니다.');}
+    try {syncEnabled=false;clearTimeout(syncTimer);await client.logout();setStatus('로그아웃되었습니다.');}
     catch {setStatus(client.currentUser ? '로그아웃에 실패했습니다.' : '이 기기에서 로그아웃되었습니다.');}
     finally {busy = false;render();}
   }
@@ -242,6 +315,8 @@
   trigger.addEventListener('click',show);
   closeButton.addEventListener('click',close);
   logoutButton.addEventListener('click',() => void signOut());
+  syncButton.addEventListener('click',() => void enableSync());
+  deleteHistoryButton.addEventListener('click',() => void deleteCloudHistory());
   overlay.addEventListener('click',event => {if (event.target === overlay) close();});
   document.addEventListener('keydown',event => {
     if (overlay.hidden) return;
@@ -256,8 +331,9 @@
   window.SoftmAccounts ||= new Map();
   window.SoftmAccounts.set(SITE,{
     get currentUser() {return currentUser();},
-    login:signIn,logout:signOut,open:show
+    login:signIn,logout:signOut,open:show,syncHistory:enableSync
   });
   window.dispatchEvent(new CustomEvent('softm:account-ready',{detail:{siteId:SITE,backend:'cloudflare'}}));
-  void ensureClient().then(render).catch(() => { /* Guest button remains; retry on click. */ });
+  subscribeHistoryChanges(scheduleSync);
+  void ensureClient().then(() => {const user=currentUser();syncEnabled=Boolean(user&&localStorage.getItem(syncKey(user.uid))==='enabled');render();if(syncEnabled)void synchronize();}).catch(() => { /* Guest button remains; retry on click. */ });
 })();

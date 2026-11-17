@@ -1,5 +1,5 @@
 /* Bump this value whenever an offline asset changes. */
-const CACHE_VERSION = '2026-11-13-cloudflare-account';
+const CACHE_VERSION = '2026-11-17-cloud-history';
 const SCOPE_URL = new URL(self.registration.scope);
 const CACHE_PREFIX = 'calc-static:' + SCOPE_URL.pathname + ':';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;

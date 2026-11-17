@@ -9,6 +9,7 @@ const SETTINGS_KEY = 'calc.settings.v1';
 const expression = $('expression');
 const state = { mode: 'basic', angleMode: 'DEG', committed: false, result: null, entryId: null, carryApproximate: false, filter: 'all', view: 'calc', memoryValue: '0', memoryApproximate: false, grandTotalValue: '0', grandTotalApproximate: false };
 let history = [];
+let historyTombstones = [];
 let historyWritable = true;
 let historyStorageFailed = false;
 let settingsWritable = true;
@@ -16,6 +17,7 @@ let editingId = null;
 let toastTimer;
 let settingsTimer;
 let deferredInstall;
+const historyListeners = new Set();
 const uid = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 function icon(name) {
@@ -71,32 +73,47 @@ function historyWarning(message) {
   $('history-storage-warning').textContent = message;
   $('history-storage-warning').hidden = false;
 }
+function validateHistoryEntry(entry) {
+  return entry && typeof entry.id === 'string' && /^[a-zA-Z0-9-]{1,90}$/.test(entry.id) && typeof entry.expression === 'string' && entry.expression.length <= 2048 && typeof entry.value === 'string' && entry.value.length <= 2048 && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(entry.value) && typeof entry.name === 'string' && entry.name.length <= 80 && typeof entry.memo === 'string' && entry.memo.length <= 500 && ['DEG', 'RAD'].includes(entry.angleMode) && (entry.mode === undefined || ['basic', 'office', 'scientific'].includes(entry.mode)) && Number.isFinite(Date.parse(entry.createdAt)) && (entry.updatedAt === undefined || Number.isFinite(Date.parse(entry.updatedAt)));
+}
+function validateHistorySnapshot(data) {
+  if (data?.version !== 1 || !Array.isArray(data.items) || data.items.length > 5000 || (data.tombstones !== undefined && (!Array.isArray(data.tombstones) || data.tombstones.length > 5000))) throw new Error('알 수 없는 기록입니다.');
+  const ids = new Set();
+  const items = data.items.map(entry => {
+    if (!validateHistoryEntry(entry) || ids.has(entry.id)) throw new Error('손상된 기록입니다.');
+    ids.add(entry.id);
+    return { ...entry, mode: entry.mode || 'basic', updatedAt: entry.updatedAt || entry.createdAt };
+  });
+  const deleted = new Set();
+  const tombstones = (data.tombstones || []).map(item => {
+    if (!item || typeof item.id !== 'string' || !/^[a-zA-Z0-9-]{1,90}$/.test(item.id) || !Number.isFinite(Date.parse(item.updatedAt)) || deleted.has(item.id)) throw new Error('손상된 삭제 기록입니다.');
+    deleted.add(item.id); return { id: item.id, updatedAt: item.updatedAt };
+  });
+  return { version: 1, items, tombstones };
+}
 function readHistory() {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return;
     if (raw.length > 3000000) throw new Error('기록이 너무 큽니다.');
     const data = JSON.parse(raw);
-    if (data?.version !== 1 || !Array.isArray(data.items) || data.items.length > 5000) throw new Error('알 수 없는 기록입니다.');
-    const ids = new Set();
-    for (const entry of data.items) {
-      if (!entry || typeof entry.id !== 'string' || !/^[a-zA-Z0-9-]{1,90}$/.test(entry.id) || ids.has(entry.id) || typeof entry.expression !== 'string' || entry.expression.length > 2048 || typeof entry.value !== 'string' || entry.value.length > 2048 || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(entry.value) || typeof entry.name !== 'string' || entry.name.length > 80 || typeof entry.memo !== 'string' || entry.memo.length > 500 ||  !['DEG', 'RAD'].includes(entry.angleMode) || (entry.mode !== undefined && !['basic', 'office', 'scientific'].includes(entry.mode)) || !Number.isFinite(Date.parse(entry.createdAt))) throw new Error('손상된 기록입니다.');
-      ids.add(entry.id);
-    }
-    history = data.items;
+    const snapshot = validateHistorySnapshot(data);
+    history = snapshot.items;
+    historyTombstones = snapshot.tombstones;
   } catch {
     historyWritable = false;
     historyWarning('저장된 기록을 읽지 못했어요. 원래 데이터는 보존합니다. 이 창에서 새로 만든 기록은 내보내기로 보관해 주세요.');
   }
 }
-function persistHistory() {
+function persistHistory({ notify = true } = {}) {
   if (!historyWritable) return false;
   try {
-    const raw = JSON.stringify({ version: 1, items: history });
+    const raw = JSON.stringify({ version: 1, items: history, tombstones: historyTombstones });
     if (raw.length > 3000000) throw new Error('기록 저장 공간이 가득 찼습니다.');
     localStorage.setItem(HISTORY_KEY, raw);
     historyStorageFailed = false;
     $('history-storage-warning').hidden = true;
+    if (notify) for (const listener of historyListeners) queueMicrotask(listener);
     return true;
   } catch {
     historyWarning('기기에 저장하지 못했어요. 이 화면의 기록은 유지됩니다. 창을 닫기 전에 내보내기로 보관해 주세요.');
@@ -105,8 +122,23 @@ function persistHistory() {
 }
 function trimHistory() {
   let unsaved = 0;
-  history = history.filter(item => item.name || ++unsaved <= 200);
+  const removed = [];
+  history = history.filter(item => { const keep = item.name || ++unsaved <= 200; if (!keep) removed.push(item); return keep; });
+  for (const item of removed) markHistoryDeleted(item.id);
 }
+function markHistoryDeleted(id, updatedAt = new Date().toISOString()) {
+  historyTombstones = historyTombstones.filter(item => item.id !== id);
+  historyTombstones.push({ id, updatedAt });
+  if (historyTombstones.length > 5000) historyTombstones = historyTombstones.slice(-5000);
+}
+function clearHistoryTombstone(id) { historyTombstones = historyTombstones.filter(item => item.id !== id); }
+export function getHistoryCloudSnapshot() { return structuredClone({ version: 1, items: history, tombstones: historyTombstones }); }
+export function applyHistoryCloudSnapshot(value) {
+  const snapshot = validateHistorySnapshot(value);
+  history = snapshot.items; historyTombstones = snapshot.tombstones;
+  persistHistory({ notify: false }); renderHistory(); updatePreview();
+}
+export function subscribeHistoryChanges(listener) { historyListeners.add(listener); return () => historyListeners.delete(listener); }
 function displayResult(result) {
   const display = formatNumber(result.value, { maxFractionDigits: 12 });
   let rounded = result.approximate === true;
@@ -260,7 +292,8 @@ function commit() {
     const existing = history.find(entry => entry.id === state.entryId);
     if (existing) return existing;
   }
-  const entry = { id: uid(), expression: expression.value.trim(), value: state.result.value, approximate: state.result.approximate, angleMode: state.angleMode, mode: state.mode, name: '', memo: '', createdAt: new Date().toISOString() };
+  const createdAt = new Date().toISOString();
+  const entry = { id: uid(), expression: expression.value.trim(), value: state.result.value, approximate: state.result.approximate, angleMode: state.angleMode, mode: state.mode, name: '', memo: '', createdAt, updatedAt: createdAt };
   if (state.mode === 'office') {
     try {
       const total = addRegister(state.grandTotalValue, entry.value, { approximate: state.grandTotalApproximate || entry.approximate });
@@ -359,10 +392,11 @@ async function removeEntry(id) {
   if (entry.name && !await confirmDelete('저장한 계산을 지울까요?', `‘${entry.name}’ 계산과 메모를 지웁니다.`)) return;
   const position = history.indexOf(entry);
   history = history.filter(item => item.id !== id);
+  markHistoryDeleted(id);
   if (state.entryId === id) { state.entryId = null; state.committed = false; }
   persistHistory(); renderHistory();
   updatePreview();
-  toast('계산을 지웠어요.', () => { if (!history.some(item => item.id === id)) history.splice(Math.min(position, history.length), 0, entry); trimHistory(); persistHistory(); renderHistory(); });
+  toast('계산을 지웠어요.', () => { if (!history.some(item => item.id === id)) history.splice(Math.min(position, history.length), 0, entry); clearHistoryTombstone(id); trimHistory(); persistHistory(); renderHistory(); });
 }
 function openSave(entry) {
   if (!entry) entry = commit();
@@ -463,6 +497,7 @@ $('save-form').addEventListener('submit', event => {
   if (!entry || !name) return;
   if (!entry.name && history.filter(item => item.name).length >= 1000) return toast('이름 붙인 계산은 1,000개까지 저장할 수 있어요. 내보낸 뒤 필요한 기록을 정리해 주세요.');
   entry.name = name.slice(0, 80); entry.memo = $('calculation-memo').value.trim().slice(0, 500);
+  entry.updatedAt = new Date().toISOString();
   const saved = persistHistory();
   renderHistory(); updatePreview(); $('save-dialog').close();
   toast(saved ? '이름을 붙여 저장했어요.' : '이름과 메모는 이 창에서만 유지돼요. 내보내기로 보관해 주세요.');
@@ -482,9 +517,9 @@ $('all-history').addEventListener('click', () => { state.filter = 'all'; renderH
 $('saved-history').addEventListener('click', () => { state.filter = 'saved'; renderHistory(); });
 $('clear-history').addEventListener('click', async () => {
   if (!await confirmDelete('계산 기록을 모두 지울까요?', `이름을 붙인 계산을 포함해 ${history.length}개의 기록을 지웁니다.\n계산노트는 그대로 유지됩니다.`)) return;
-  const previous = history.slice(); history = []; state.entryId = null; state.committed = false;
+  const previous = history.slice(); for (const entry of previous) markHistoryDeleted(entry.id); history = []; state.entryId = null; state.committed = false;
   persistHistory(); renderHistory(); updatePreview();
-  toast('계산 기록을 모두 지웠어요.', () => { const ids = new Set(history.map(item => item.id)); history.push(...previous.filter(item => !ids.has(item.id))); trimHistory(); persistHistory(); renderHistory(); });
+  toast('계산 기록을 모두 지웠어요.', () => { const ids = new Set(history.map(item => item.id)); const restored = previous.filter(item => !ids.has(item.id)); history.push(...restored); for (const entry of restored) clearHistoryTombstone(entry.id); trimHistory(); persistHistory(); renderHistory(); });
 });
 $('export-history').addEventListener('click', () => {
   if (!history.length) return;
